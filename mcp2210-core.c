@@ -12,9 +12,11 @@
  * any later version.
  */
 
-#include <linux/usb.h>
+//#include <linux/usb.h>
 #include "mcp2210.h"
-#include "../../hid/usbhid/usbhid.h"
+#include <linux/hid.h>
+#include <linux/module.h>
+//#include "../../hid/usbhid/usbhid.h"
 
 struct info_command {
 	int id;
@@ -25,6 +27,8 @@ struct info_command {
 
 int mcp2210_spi_probe(struct mcp2210_device *dev);
 void mcp2210_spi_remove(struct mcp2210_device *dev);
+int mcp2210_ctl_init_module(struct mcp2210_device *dev);
+void mcp2210_ctl_cleanup_module(struct mcp2210_device *dev);
 static void mcp2210_output_command_atomic(struct mcp2210_device *dev);
 
 int next_mcp2210_info_command(void *data, u8 *request) {
@@ -39,7 +43,7 @@ int next_mcp2210_info_command(void *data, u8 *request) {
 		return 0;
 	}
 	
-	cmd_data->count++;	
+	cmd_data->count++;
 	request[0] = 0x41;
 	
 	return 1;
@@ -97,8 +101,8 @@ static void mcp2210_output_command_atomic(struct mcp2210_device *dev) {
 		return;
 	}
 		
-	memset(dev->requeust_buffer, 0, MCP2210_BUFFER_SIZE);
-	num = dev->current_command->next_request(dev->current_command->data, dev->requeust_buffer);
+	memset(dev->request_buffer, 0, MCP2210_BUFFER_SIZE);
+	num = dev->current_command->next_request(dev->current_command->data, dev->request_buffer);
 	while(num > 0) {
 		dev->current_command->requests_pending++;
 				
@@ -118,7 +122,7 @@ static void mcp2210_output_command_atomic(struct mcp2210_device *dev) {
 		if(!list_node) 
 			goto err_free_node;
 		
-		report->id = dev->requeust_buffer[0];
+		report->id = dev->request_buffer[0];
 		report->type = HID_OUTPUT_REPORT;
 		report->field[0] = field;
 		report->maxfield = 1;
@@ -134,18 +138,19 @@ static void mcp2210_output_command_atomic(struct mcp2210_device *dev) {
 		list_add_tail(&list_node->node, &dev->current_command->request_list);
 		
 		for(cnt = 0; cnt < (MCP2210_BUFFER_SIZE - 1); cnt++) {
-			field->value[cnt] = dev->requeust_buffer[cnt + 1];
+			field->value[cnt] = dev->request_buffer[cnt + 1];
 		}
 				
-		usbhid_submit_report(dev->hid, report, USB_DIR_OUT);
+		//usbhid_submit_report(dev->hid, report, USB_DIR_OUT);
+		hid_hw_request(dev->hid, report, HID_REQ_SET_REPORT);
 		//dev->hid->hiddev_report_event(dev->hid, report);
-		//dev->hid->hid_output_raw_report(dev->hid, dev->requeust_buffer, MCP2210_BUFFER_SIZE, HID_OUTPUT_REPORT);		
+		//dev->hid->hid_output_raw_report(dev->hid, dev->request_buffer, MCP2210_BUFFER_SIZE, HID_OUTPUT_REPORT);		
 		
 		if(dev->current_command->requests_pending >= 63) 
 			break;
 			
-		memset(dev->requeust_buffer, 0, MCP2210_BUFFER_SIZE);
-		num = dev->current_command->next_request(dev->current_command->data, dev->requeust_buffer);
+		memset(dev->request_buffer, 0, MCP2210_BUFFER_SIZE);
+		num = dev->current_command->next_request(dev->current_command->data, dev->request_buffer);
 	}
 		
 	//printk("Sending %d commands\n", dev->current_command->requests_pending);		
@@ -262,7 +267,7 @@ static int mcp2210_probe(struct hid_device *hdev,
 	if (!dev)
 		return -ENOMEM;
 	
-	printk("mcp2210_probe\n");				
+	printk("mcp2210_probe\n");
 	
 	hid_set_drvdata(hdev, dev);
 	dev->hid = hdev;
@@ -301,6 +306,11 @@ static int mcp2210_probe(struct hid_device *hdev,
 		goto err_power;
 	}
 	
+	ret = mcp2210_ctl_init_module(dev);
+	if(ret < 0) {
+        goto err_power;
+    }
+    
 	/*
 	cmd_data = kzalloc(sizeof(struct info_command), GFP_KERNEL);
 	if (!cmd_data)
@@ -359,6 +369,8 @@ static void mcp2210_remove(struct hid_device *hdev)
 	}
 	
 	mcp2210_spi_remove(dev);
+    
+    mcp2210_ctl_cleanup_module(dev);
 
 	if (hdev->ll_driver->power)
 		hdev->ll_driver->power(hdev, PM_HINT_NORMAL);
@@ -373,8 +385,10 @@ static void mcp2210_remove(struct hid_device *hdev)
 static const struct hid_device_id mcp2210_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_MICROCHIP, USB_DEVICE_ID_MCP2210),
 		.driver_data = 0 },
-	{ }
+	{}
 };
+
+MODULE_DEVICE_TABLE(hid, mcp2210_devices);
 
 static struct hid_driver mcp2210_driver = {
 	.name = "mcp2210",

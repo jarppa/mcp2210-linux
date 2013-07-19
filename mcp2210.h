@@ -35,7 +35,7 @@ struct mcp2210_device {
 	struct mutex command_mutex;
 	spinlock_t command_lock;
 	struct work_struct command_work;
-	u8 requeust_buffer[MCP2210_BUFFER_SIZE];
+	u8 request_buffer[MCP2210_BUFFER_SIZE];
 	void *spi_data;
 };
 
